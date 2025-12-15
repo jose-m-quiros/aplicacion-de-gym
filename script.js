@@ -1,8 +1,5 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbyeHZ3OWA535iKpmP7zPVh5ilXQ_1WOk_1Wepf1O0pGJMTbdY3Td4MZtm0F8uT-Y67wkA/exec";
 
-// ==================================================
-// CONFIGURACIÓN DE LA RUTINA (EDITA ESTO CADA MES)
-// ==================================================
 const RUTINA_MENSUAL = [
     {
         id: 1,
@@ -47,8 +44,6 @@ const RUTINA_MENSUAL = [
     }
 ];
 
-
-
 window.addEventListener("DOMContentLoaded", function () {
     renderUI();
     const savedUnit = localStorage.getItem("preferredUnit") || "lbs";
@@ -58,21 +53,26 @@ window.addEventListener("DOMContentLoaded", function () {
             localStorage.setItem("preferredUnit", this.value);
         });
     });
+    restoreDrafts();
 });
 
 function renderUI() {
     const tabsContainer = document.getElementById('tabs-container');
     const contentContainer = document.getElementById('exercises-container');
     
+    contentContainer.addEventListener('input', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+            saveDraft(e.target);
+        }
+    });
+
     RUTINA_MENSUAL.forEach((dia, index) => {
-        // Generar Tab
         const tab = document.createElement('div');
         tab.className = `tab ${index === 0 ? 'active' : ''}`;
         tab.onclick = () => showDay(dia.id);
         tab.innerText = `Día ${dia.id} - ${dia.nombre}`;
         tabsContainer.appendChild(tab);
 
-        // Generar Sección del Día
         const section = document.createElement('div');
         section.id = `day${dia.id}`;
         section.className = `day-section ${index === 0 ? 'active' : ''}`;
@@ -102,8 +102,8 @@ function renderUI() {
                                 <td class="table-label">Serie 1</td>
                                 <td><input type="number" id="${ex.id}_s1" placeholder="Peso" step="0.5"></td>
                                 <td><input type="number" id="${ex.id}_reps1" placeholder="Reps"></td>
-                                <td><input type="text" id="${ex.id}_partial1" placeholder="Parc."></td>
-                                <td><input type="text" id="${ex.id}_rest1" placeholder="Desc."></td>
+                                <td><input type="text" id="${ex.id}_partial1" placeholder="Parciales"></td>
+                                <td><input type="text" id="${ex.id}_rest1" placeholder="Descanso"></td>
                                 <td><button class="btn-remove" onclick="removeSeries(this)">🗑️</button></td>
                             </tr>
                         </tbody>
@@ -118,7 +118,56 @@ function renderUI() {
     });
 }
 
-// Las funciones showDay, addSeries, removeSeries y saveExercise se mantienen igual a tu código original
+function saveDraft(inputElement) {
+    if (!inputElement.id) return;
+    const key = "draft_" + inputElement.id;
+    localStorage.setItem(key, inputElement.value);
+}
+
+function clearDraftsForCard(fieldPrefix) {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith("draft_" + fieldPrefix)) {
+            keysToRemove.push(key);
+        }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+}
+
+function restoreDrafts() {
+    RUTINA_MENSUAL.forEach(dia => {
+        dia.ejercicios.forEach(ex => {
+            const unitKey = `draft_${ex.id}_unit`;
+            if (localStorage.getItem(unitKey)) {
+                const select = document.getElementById(`${ex.id}_unit`);
+                if (select) select.value = localStorage.getItem(unitKey);
+            }
+
+            for (let i = 1; i <= 10; i++) {
+                const weightKey = `draft_${ex.id}_s${i}`;
+                const repsKey = `draft_${ex.id}_reps${i}`;
+                
+                if (localStorage.getItem(weightKey) || localStorage.getItem(repsKey)) {
+                    let weightInput = document.getElementById(`${ex.id}_s${i}`);
+                    
+                    if (!weightInput && i > 1) {
+                        addSeries(ex.id);
+                        weightInput = document.getElementById(`${ex.id}_s${i}`);
+                    }
+
+                    if (weightInput) {
+                        weightInput.value = localStorage.getItem(weightKey) || "";
+                        document.getElementById(`${ex.id}_reps${i}`).value = localStorage.getItem(repsKey) || "";
+                        document.getElementById(`${ex.id}_partial${i}`).value = localStorage.getItem(`draft_${ex.id}_partial${i}`) || "";
+                        document.getElementById(`${ex.id}_rest${i}`).value = localStorage.getItem(`draft_${ex.id}_rest${i}`) || "";
+                    }
+                }
+            }
+        });
+    });
+}
+
 function showDay(dayNumber) {
     document.querySelectorAll(".day-section").forEach((s) => s.classList.remove("active"));
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
@@ -160,8 +209,18 @@ function addSeries(fieldPrefix) {
 
 function removeSeries(button) {
     const tbody = button.closest("tbody");
-    if (tbody.querySelectorAll("tr").length <= 1) return;
-    button.closest("tr").remove();
+    const row = button.closest("tr");
+    const inputs = row.querySelectorAll("input");
+    inputs.forEach(input => {
+        localStorage.removeItem("draft_" + input.id);
+    });
+
+    if (tbody.querySelectorAll("tr").length <= 1) {
+        inputs.forEach(input => input.value = "");
+        return; 
+    }
+    
+    row.remove();
 }
 
 async function saveExercise(day, exerciseName, fieldPrefix) {
@@ -170,10 +229,12 @@ async function saveExercise(day, exerciseName, fieldPrefix) {
     const selectedUnit = unitSelector.value;
     const rows = card.querySelectorAll(".exercise-table tbody tr");
     const seriesData = [];
+    const saveButton = card.querySelector(".btn");
 
     rows.forEach((row, index) => {
         const serieNum = index + 1;
         const weight = document.getElementById(`${fieldPrefix}_s${serieNum}`)?.value;
+        
         if (weight) {
             const weightValue = parseFloat(weight);
             let weightLbs = selectedUnit === "lbs" ? weightValue : parseFloat(convertWeight(weightValue, "kg", "lbs"));
@@ -191,7 +252,14 @@ async function saveExercise(day, exerciseName, fieldPrefix) {
         }
     });
 
-    if (seriesData.length === 0) { showMessage("⚠️ Ingresa peso", "error"); return; }
+    if (seriesData.length === 0) { 
+        showMessage("⚠️ Ingresa al menos un peso", "error"); 
+        return; 
+    }
+
+    const originalBtnText = saveButton.innerText;
+    saveButton.innerText = "⏳ Guardando...";
+    saveButton.disabled = true;
 
     const dataToSend = { fecha: getCurrentDate(), dia: day, ejercicio: exerciseName, unidad_usada: selectedUnit, series: seriesData };
 
@@ -200,9 +268,18 @@ async function saveExercise(day, exerciseName, fieldPrefix) {
         formData.append("data", JSON.stringify(dataToSend));
         const response = await fetch(API_URL, { method: "POST", body: formData });
         const result = await response.json();
+        
         if (result.status === "success") {
-            showMessage(`✅ Guardado`, "success");
+            showMessage(`✅ Guardado correctamente`, "success");
             card.querySelectorAll('input').forEach(i => i.value = "");
+            clearDraftsForCard(fieldPrefix);
+        } else {
+            throw new Error("Respuesta del servidor no fue success");
         }
-    } catch (e) { showMessage("❌ Error", "error"); }
+    } catch (e) { 
+        showMessage("❌ Error de conexión. No se guardó.", "error"); 
+    } finally {
+        saveButton.innerText = originalBtnText;
+        saveButton.disabled = false;
+    }
 }
